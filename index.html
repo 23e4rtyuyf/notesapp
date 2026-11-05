@@ -61,6 +61,7 @@
       background: #101a33;
     }
     .dropzone.active { border-color: var(--accent); background: #192752; }
+    .paste-button { margin-top: 12px; }
     .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 14px; }
     .card { overflow: hidden; border: 1px solid var(--border); border-radius: 12px; background: #0c1327; }
     .thumb-button { display: block; width: 100%; padding: 0; border: 0; border-radius: 0; background: #080d1a; }
@@ -175,6 +176,7 @@
       <div id="dropzone" class="dropzone" tabindex="0">
         <strong>Paste or drop private images here</strong><br>
         Press <kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>V</kbd>, drag image files here, or use “Add images”.
+        <br><button id="pasteButton" class="secondary paste-button" type="button">Paste image</button>
       </div>
       <div id="gallery" class="grid"></div>
     </section>
@@ -606,13 +608,50 @@
     });
     document.addEventListener("paste", async (event) => {
       if ($("vaultPanel").classList.contains("hidden")) return;
-      const files = [...event.clipboardData.items]
-        .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
-        .map((item) => item.getAsFile())
-        .filter(Boolean);
+      const files = clipboardImages(event.clipboardData);
       if (!files.length) return;
       event.preventDefault();
       try { await addFiles(files); } catch (error) { setStatus(error.message, true); }
+    });
+
+    function clipboardImages(clipboard) {
+      if (!clipboard) return [];
+      const files = [...(clipboard.files || [])].filter((file) => file.type.startsWith("image/"));
+      for (const item of [...(clipboard.items || [])]) {
+        if (item.kind === "file" && item.type.startsWith("image/")) {
+          const file = item.getAsFile();
+          if (file) files.push(file);
+        }
+      }
+      return files;
+    }
+
+    async function pasteFromClipboard() {
+      if (navigator.clipboard?.read) {
+        const clipboardItems = await navigator.clipboard.read();
+        const files = [];
+        for (const item of clipboardItems) {
+          for (const type of item.types) {
+            if (type.startsWith("image/")) {
+              files.push(await item.getType(type));
+              break;
+            }
+          }
+        }
+        if (files.length) {
+          await addFiles(files);
+          return;
+        }
+      }
+      setStatus("Copy an image first, then use Ctrl/Cmd+V. Some browsers block clipboard access.", true);
+    }
+
+    $("pasteButton").addEventListener("click", async () => {
+      try {
+        await pasteFromClipboard();
+      } catch (error) {
+        setStatus("Clipboard access was blocked. Copy an image, then use Ctrl/Cmd+V.", true);
+      }
     });
 
     function lockVault() {
