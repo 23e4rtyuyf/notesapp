@@ -77,8 +77,12 @@
       border: 1px solid var(--border); border-radius: 16px; background: rgba(21, 29, 51, .94);
     }
     .decoy h2 { margin: 0 0 8px; }
-    .note-form { display: flex; gap: 10px; margin-top: 16px; }
-    .note-form input { flex: 1; min-width: 0; }
+    .note-form { display: flex; gap: 10px; margin-top: 16px; align-items: stretch; }
+    .note-form textarea {
+      flex: 1; min-width: 0; min-height: 90px; resize: vertical; padding: 11px 12px;
+      border: 1px solid var(--border); border-radius: 9px; color: var(--text);
+      background: #0c1327; font: inherit;
+    }
     .notes-list {
       display: grid; gap: 10px; max-height: 340px; overflow-y: auto;
       margin-top: 16px; padding-right: 4px;
@@ -137,7 +141,7 @@
       <h2>Today</h2>
       <p>Keep your plans, reminders, and ideas together.</p>
       <form id="noteForm" class="note-form">
-        <input id="noteInput" type="text" maxlength="240" placeholder="Write a note…" aria-label="New note">
+        <textarea id="noteInput" placeholder="Write or paste a note of any length…" aria-label="New note"></textarea>
         <button type="submit">Add note</button>
       </form>
       <div id="notesList" class="notes-list"></div>
@@ -266,7 +270,12 @@
       if (!text) return;
       const notes = readNotes();
       notes.unshift({ id: crypto.randomUUID(), text, added: Date.now() });
-      localStorage.setItem(NOTES_KEY, JSON.stringify(notes.slice(0, 100)));
+      try {
+        localStorage.setItem(NOTES_KEY, JSON.stringify(notes.slice(0, 100)));
+      } catch {
+        setStatus("This note is too large for browser storage. Split it into smaller notes.", true);
+        return;
+      }
       input.value = "";
       renderNotes();
     });
