@@ -200,10 +200,17 @@
     const PBKDF2_ROUNDS = 600000;
     const enc = new TextEncoder();
     const dec = new TextDecoder();
+    const AUTO_LOCK_MS = 5 * 60 * 1000;
+    const failedUnlockLimit = 5;
+    const failedUnlockDelay = 30 * 1000;
     let db;
     let key;
     let vaultSalt;
     let items = [];
+    let lastActivity = 0;
+    let failedUnlocks = 0;
+    let lockedUntil = 0;
+    const objectUrls = new Set();
 
     const $ = (id) => document.getElementById(id);
     let titleTaps = 0;
@@ -457,11 +464,19 @@
 
     async function imageUrl(item) {
       const bytes = await decryptBytes(item);
-      return URL.createObjectURL(new Blob([bytes], { type: item.type }));
+      const url = URL.createObjectURL(new Blob([bytes], { type: item.type }));
+      objectUrls.add(url);
+      return url;
+    }
+
+    function clearObjectUrls() {
+      for (const url of objectUrls) URL.revokeObjectURL(url);
+      objectUrls.clear();
     }
 
     async function render() {
       const gallery = $("gallery");
+      clearObjectUrls();
       gallery.replaceChildren();
       if (!items.length) {
         gallery.innerHTML = '<div class="empty">No private images yet. Paste, drop, or add an image above.</div>';
@@ -547,6 +562,10 @@
 
     $("unlockForm").addEventListener("submit", async (event) => {
       event.preventDefault();
+      if (Date.now() < lockedUntil) {
+        setStatus("Too many failed attempts. Try again shortly.", true);
+        return;
+      }
       $("unlockButton").disabled = true;
       setStatus("Opening encrypted vault…");
       try {
@@ -558,6 +577,8 @@
         $("decoyPanel").classList.add("hidden");
         $("securityPanel").classList.add("hidden");
         $("vaultPanel").classList.remove("hidden");
+        failedUnlocks = 0;
+        lastActivity = Date.now();
         await render();
       } catch (error) {
         const storageError = error.message === "Embedded storage is blocked."
@@ -567,6 +588,11 @@
           setStatus("Google Sites blocked this page’s private storage. Open it in a new tab.", true);
           showStorageHelp();
         } else {
+          failedUnlocks++;
+          if (failedUnlocks >= failedUnlockLimit) {
+            lockedUntil = Date.now() + failedUnlockDelay;
+            failedUnlocks = 0;
+          }
           setStatus(error.message === "Use at least 12 characters." ? error.message : `Unlock failed: ${error.name || "browser error"}.`, true);
         }
       } finally {
@@ -591,6 +617,7 @@
       if (event.target === $("viewer")) closeViewer();
     });
     document.addEventListener("keydown", (event) => {
+      if (!$("vaultPanel").classList.contains("hidden")) lastActivity = Date.now();
       if (event.key !== "Escape") return;
       if (!$("viewer").classList.contains("hidden")) closeViewer();
       else if (!$("vaultPanel").classList.contains("hidden")) lockVault();
@@ -608,6 +635,7 @@
     });
     document.addEventListener("paste", async (event) => {
       if ($("vaultPanel").classList.contains("hidden")) return;
+      lastActivity = Date.now();
       const files = clipboardImages(event.clipboardData);
       if (!files.length) return;
       event.preventDefault();
@@ -647,6 +675,7 @@
     }
 
     $("pasteButton").addEventListener("click", async () => {
+      lastActivity = Date.now();
       try {
         await pasteFromClipboard();
       } catch (error) {
@@ -657,6 +686,8 @@
     function lockVault() {
       key = null;
       items = [];
+      clearObjectUrls();
+      $("gallery").replaceChildren();
       closeViewer();
       $("vaultPanel").classList.add("hidden");
       $("lockPanel").classList.add("hidden");
@@ -664,6 +695,20 @@
       $("decoyPanel").classList.remove("hidden");
       $("appSubtitle").textContent = "A simple place to keep track of everyday thoughts.";
     }
+
+    ["pointerdown", "touchstart", "input", "mousemove"].forEach((eventName) => {
+      document.addEventListener(eventName, () => {
+        if (!$("vaultPanel").classList.contains("hidden")) lastActivity = Date.now();
+      }, { passive: true });
+    });
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden && !$("vaultPanel").classList.contains("hidden")) lockVault();
+    });
+    setInterval(() => {
+      if (!$("vaultPanel").classList.contains("hidden") && Date.now() - lastActivity >= AUTO_LOCK_MS) {
+        lockVault();
+      }
+    }, 10000);
     $("lockButton").addEventListener("click", lockVault);
     $("quickExitButton").addEventListener("click", lockVault);
     $("openStandaloneLink").href = window.location.href;
