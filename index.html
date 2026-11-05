@@ -83,6 +83,7 @@
       border: 1px solid var(--border); border-radius: 9px; color: var(--text);
       background: #0c1327; font: inherit;
     }
+    .note-actions { display: flex; flex-direction: column; gap: 8px; }
     .notes-list {
       display: grid; gap: 10px; max-height: 340px; overflow-y: auto;
       margin-top: 16px; padding-right: 4px;
@@ -142,7 +143,10 @@
       <p>Keep your plans, reminders, and ideas together.</p>
       <form id="noteForm" class="note-form">
         <textarea id="noteInput" placeholder="Write or paste a note of any length…" aria-label="New note"></textarea>
-        <button type="submit">Add note</button>
+        <div class="note-actions">
+          <button type="submit">Add note</button>
+          <button id="pasteTextButton" class="secondary" type="button">Paste text</button>
+        </div>
       </form>
       <div id="notesList" class="notes-list"></div>
     </section>
@@ -278,6 +282,25 @@
       }
       input.value = "";
       renderNotes();
+    });
+
+    $("pasteTextButton").addEventListener("click", async () => {
+      const input = $("noteInput");
+      try {
+        if (!navigator.clipboard?.readText) throw new Error("Clipboard API unavailable");
+        const text = await navigator.clipboard.readText();
+        if (!text) {
+          setStatus("The clipboard does not contain text.", true);
+          input.focus();
+          return;
+        }
+        input.value += (input.value ? "\n" : "") + text;
+        input.focus();
+        setStatus("Text pasted. Press Add note to save it.");
+      } catch {
+        input.focus();
+        setStatus("Clipboard access was blocked. Tap the text box, then use Ctrl/Cmd+V.", true);
+      }
     });
 
     function showStorageHelp() {
