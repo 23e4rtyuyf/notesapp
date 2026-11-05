@@ -100,6 +100,12 @@
       padding: 50px 18px 18px; background: rgba(2, 5, 14, .97);
     }
     .viewer img { display: block; width: 100%; height: 100%; max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 10px; }
+    .viewer pre {
+      width: min(100%, 1000px); max-height: 100%; margin: 0; overflow: auto;
+      padding: 18px; white-space: pre-wrap; overflow-wrap: anywhere;
+      border: 1px solid var(--border); border-radius: 10px; color: var(--text);
+      background: #0c1327; text-align: left;
+    }
     .viewer-close {
       position: fixed; top: 14px; right: 14px; min-width: 46px; min-height: 46px;
       border-radius: 50%; color: var(--text); background: var(--panel-2); font-size: 1.4rem;
@@ -172,8 +178,8 @@
 
     <section id="vaultPanel" class="panel hidden">
       <div class="toolbar">
-        <button id="addButton" class="secondary" type="button">＋ Add images</button>
-        <input id="imageInput" type="file" accept="image/*" multiple hidden>
+        <button id="addButton" class="secondary" type="button">＋ Add files</button>
+        <input id="imageInput" type="file" accept="image/*,text/*,.txt,.md,.csv,.json,.xml,.log" multiple hidden>
         <button id="exportButton" class="secondary" type="button">Export encrypted backup</button>
         <button id="importButton" class="secondary" type="button">Import backup</button>
         <input id="backupInput" type="file" accept="application/json,.json" hidden>
@@ -182,9 +188,10 @@
         <button id="wipeButton" class="danger" type="button">Delete vault</button>
       </div>
       <div id="dropzone" class="dropzone" tabindex="0">
-        <strong>Paste or drop private images here</strong><br>
-        Press <kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>V</kbd>, drag image files here, or use “Add images”.
+        <strong>Paste or drop private files here</strong><br>
+        Images and text files are encrypted before they are saved.
         <br><button id="pasteButton" class="secondary paste-button" type="button">Paste image</button>
+        <button id="pasteTextVaultButton" class="secondary paste-button" type="button">Paste text</button>
       </div>
       <div id="gallery" class="grid"></div>
     </section>
@@ -199,6 +206,7 @@
     <span id="viewerName" class="viewer-name"></span>
     <button id="viewerClose" class="viewer-close" type="button" aria-label="Close image viewer">×</button>
     <img id="viewerImage" alt="">
+    <pre id="viewerText" class="hidden"></pre>
   </div>
 
   <script>
@@ -454,15 +462,18 @@
     }
 
     async function addFiles(files) {
-      const imageFiles = [...files].filter((file) => file.type.startsWith("image/"));
-      if (!imageFiles.length) throw new Error("No image files were found.");
-      setStatus(`Encrypting ${imageFiles.length} image${imageFiles.length === 1 ? "" : "s"}…`);
-      for (const file of imageFiles) {
+      const acceptedFiles = [...files].filter((file) =>
+        file.type.startsWith("image/") || isTextFile(file)
+      );
+      if (!acceptedFiles.length) throw new Error("No image or text files were found.");
+      setStatus(`Encrypting ${acceptedFiles.length} file${acceptedFiles.length === 1 ? "" : "s"}…`);
+      for (const file of acceptedFiles) {
         const id = crypto.randomUUID();
         const encryptedImage = await encryptBytes(await file.arrayBuffer());
         const metadata = await encryptJson({
-          name: file.name || "pasted-image",
-          type: file.type || "image/png",
+          name: file.name || (file.type.startsWith("image/") ? "pasted-image" : "pasted-text.txt"),
+          type: file.type || "text/plain",
+          kind: file.type.startsWith("image/") ? "image" : "text",
           size: file.size,
           added: Date.now()
         });
@@ -472,7 +483,17 @@
       }
       await refreshItems();
       render();
-      setStatus("Images encrypted and saved in this browser.");
+      setStatus("Files encrypted and saved in this browser.");
+    }
+
+    function isTextFile(file) {
+      return file.type.startsWith("text/")
+        || /\.(txt|md|csv|json|xml|log|html|css|js|yaml|yml)$/i.test(file.name || "");
+    }
+
+    async function addTextToVault(text) {
+      const file = new File([text], "pasted-text.txt", { type: "text/plain" });
+      await addFiles([file]);
     }
 
     async function refreshItems() {
@@ -511,22 +532,31 @@
       clearObjectUrls();
       gallery.replaceChildren();
       if (!items.length) {
-        gallery.innerHTML = '<div class="empty">No private images yet. Paste, drop, or add an image above.</div>';
+        gallery.innerHTML = '<div class="empty">No private files yet. Add, paste, or drop an image or text file above.</div>';
         return;
       }
       for (const item of items) {
         const card = document.createElement("article");
         card.className = "card";
-        const image = document.createElement("img");
-        image.alt = item.name;
-        image.loading = "lazy";
-        image.src = await imageUrl(item);
         const thumbButton = document.createElement("button");
         thumbButton.className = "thumb-button";
         thumbButton.type = "button";
-        thumbButton.title = "Open image";
-        thumbButton.addEventListener("click", () => openViewer(image.src, item.name));
-        thumbButton.append(image);
+        thumbButton.title = "Open file";
+        if (item.kind === "text") {
+          thumbButton.textContent = "TXT";
+          thumbButton.style.minHeight = "170px";
+          thumbButton.addEventListener("click", async () => {
+            const text = dec.decode(await decryptBytes(item));
+            openTextViewer(text, item.name);
+          });
+        } else {
+          const image = document.createElement("img");
+          image.alt = item.name;
+          image.loading = "lazy";
+          image.src = await imageUrl(item);
+          thumbButton.addEventListener("click", () => openViewer(image.src, item.name));
+          thumbButton.append(image);
+        }
         const info = document.createElement("div");
         info.className = "card-info";
         const name = document.createElement("strong");
@@ -554,6 +584,17 @@
       $("viewerImage").src = url;
       $("viewerImage").alt = name;
       $("viewerName").textContent = name;
+      $("viewerText").classList.add("hidden");
+      $("viewerImage").classList.remove("hidden");
+      $("viewer").classList.remove("hidden");
+      $("viewerClose").focus();
+    }
+
+    function openTextViewer(text, name) {
+      $("viewerText").textContent = text;
+      $("viewerName").textContent = name;
+      $("viewerText").classList.remove("hidden");
+      $("viewerImage").classList.add("hidden");
       $("viewer").classList.remove("hidden");
       $("viewerClose").focus();
     }
@@ -561,6 +602,9 @@
     function closeViewer() {
       $("viewer").classList.add("hidden");
       $("viewerImage").src = "";
+      $("viewerText").textContent = "";
+      $("viewerText").classList.add("hidden");
+      $("viewerImage").classList.remove("hidden");
       $("viewerName").textContent = "";
       if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     }
@@ -669,9 +713,16 @@
       if ($("vaultPanel").classList.contains("hidden")) return;
       lastActivity = Date.now();
       const files = clipboardImages(event.clipboardData);
-      if (!files.length) return;
-      event.preventDefault();
-      try { await addFiles(files); } catch (error) { setStatus(error.message, true); }
+      if (files.length) {
+        event.preventDefault();
+        try { await addFiles(files); } catch (error) { setStatus(error.message, true); }
+        return;
+      }
+      const text = event.clipboardData?.getData("text/plain");
+      if (text) {
+        event.preventDefault();
+        try { await addTextToVault(text); } catch (error) { setStatus(error.message, true); }
+      }
     });
 
     function clipboardImages(clipboard) {
@@ -712,6 +763,16 @@
         await pasteFromClipboard();
       } catch (error) {
         setStatus("Clipboard access was blocked. Copy an image, then use Ctrl/Cmd+V.", true);
+      }
+    });
+
+    $("pasteTextVaultButton").addEventListener("click", async () => {
+      try {
+        const text = await navigator.clipboard.readText();
+        if (!text) throw new Error("Clipboard has no text.");
+        await addTextToVault(text);
+      } catch {
+        setStatus("Clipboard text access was blocked. Copy text, then use Ctrl/Cmd+V in the vault.", true);
       }
     });
 
